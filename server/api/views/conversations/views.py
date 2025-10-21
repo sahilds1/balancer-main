@@ -1,3 +1,7 @@
+import os
+import json
+import logging
+
 from rest_framework.response import Response
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -9,10 +13,8 @@ from nltk.stem import PorterStemmer
 import requests
 from openai import OpenAI
 import tiktoken
-import os
-import json
-import logging
 from django.views.decorators.csrf import csrf_exempt
+
 from .models import Conversation, Message
 from .serializers import ConversationSerializer
 from ...services.tools.tools import tools, execute_tool
@@ -80,12 +82,16 @@ class OpenAIAPIException(APIException):
 
 
 class ConversationViewSet(viewsets.ModelViewSet):
+    # Class that you use to format your Django model objects into
+    # the JSON you'll be sending back in your respone
     serializer_class = ConversationSerializer
     permission_classes = [IsAuthenticated]
 
+    # Methods that come from the GenericAPIView
     def get_queryset(self):
         return Conversation.objects.filter(user=self.request.user)
 
+    # Methods that comes with CreateModelMixin
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
@@ -95,6 +101,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
         self.perform_destroy(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    # Detail: Dealing with a list of something or with one specific something in your database
     @action(detail=True, methods=['post'])
     def continue_conversation(self, request, pk=None):
         conversation = self.get_object()
