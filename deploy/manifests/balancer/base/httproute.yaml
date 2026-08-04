@@ -1,0 +1,26 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: balancer
+spec:
+  # Attaches to the Gateway the cluster provides for this app. The cluster names
+  # it after the app, in the app's namespace — that convention is the entire
+  # contract. See ../README.md.
+  parentRefs:
+    - name: balancer
+
+  # No `hostnames` on purpose.
+  #
+  # A route that omits hostnames inherits the hostnames of the listeners it
+  # attaches to, so the cluster's Gateway decides where this app is reachable —
+  # balancerproject.org in live, balancer.sandbox.k8s.phl.io in sandbox — and
+  # this file stays identical in every environment.
+
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: balancer
+          port: 80

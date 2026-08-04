@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: balancer
+
+resources:
+  - ../../base
+
+images:
+  - name: ghcr.io/codeforphilly/balancer-main/app
+    newTag: 1.1.5
+
+configMapGenerator:
+  - name: balancer-config
+    behavior: merge
+    literals:
+      - HOSTNAME=balancerproject.org
+    envs:
+      - balancer.env
+
+labels:
+  - includeSelectors: true
+    pairs:
+      environment: production
+      app.kubernetes.io/instance: balancer-production
+
+# No routing patches. The cluster's Gateway carries the hostname and TLS, and
+# the HTTPRoute inherits it — see ../../README.md.
+#
+# HOSTNAME above is still set here because the *application* needs to know its
+# own public name (Django ALLOWED_HOSTS / CSRF_TRUSTED_ORIGINS). That's app
+# config, not routing.
