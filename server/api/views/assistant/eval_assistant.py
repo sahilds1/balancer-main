@@ -46,6 +46,7 @@ FIELDNAMES = [
     "tool_error_count",
     "tool_calls_json",
     # TODO: add turn_count, the five token columns, and turns_json here and to *both* run_one row literals
+    # Token counts are None (a blank cell) when unknown: response.usage was missing or unrecognized, or the run raised
     "duration_s",
     "error",
 ]
@@ -91,7 +92,7 @@ def run_one(question: str, user, branch: str) -> dict:
             # Full per-call detail — status, the model's arguments (query), output/error — 
             # for analysis that the flat columns can't hold.
             "tool_calls_json": json.dumps([asdict(c) for c in result.tool_calls]),
-            # TODO: turn_count = len(result.turns), token totals = sums over result.turns, turns_json = the asdict list
+            # TODO: turn_count = len(result.turns), token totals = sums over result.turns (None if any turn's count is None), turns_json = the asdict list
             "duration_s": duration_s,
             "error": None,
         }
@@ -104,11 +105,14 @@ def run_one(question: str, user, branch: str) -> dict:
             "question": question,
             "response_output_text": None,
             "response_id": None,
+            # TODO: Write None, not "" — tool calls may have run before the raise, so the names are unknown (test_run_one_captures_error asserts "")
             "tools_called": "",
+            # TODO: Write None, not 0 — tool calls may have run before the raise, so the count is unknown (test_run_one_captures_error asserts 0)
             "tool_call_count": 0,
+            # TODO: Write None, not 0 — tool calls may have failed before the raise, so the count is unknown (test_run_one_captures_error asserts 0)
             "tool_error_count": 0,
             "tool_calls_json": None,
-            # TODO: turn_count 0, token totals 0, turns_json None — inherits tool_call_count's known lie (mid-loop failure hole)
+            # TODO: turn_count, token totals and turns_json all None — unknown, not zero
             "duration_s": duration_s,
             "error": str(e),
         }
@@ -125,6 +129,7 @@ def main():
     logger.info(f"Starting evaluation: branch={branch}, model={MODEL_NAME}, questions={len(QUESTIONS)}")
 
     # Load the embedding model before starting any workers
+    # TODO: Fix TransformerModel in its own commit — __new__ publishes _instance before .model loads, so concurrent callers get a half-built object
     TransformerModel.get_instance()
 
     # ThreadPoolExecutor runs questions concurrently

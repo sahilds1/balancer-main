@@ -18,6 +18,8 @@
 # hands it to the API as `instructions`, eval_assistant.py imports it for a planned
 # sidecar and does not use it — so no .format() reads the braces. They are inert to
 # Python; the only thing interpreting them is the model.
+
+# TODO: Mention ask_database — the prompt names only search_documents and says to "ALWAYS use" it first, steering the model away from ask_database
 INSTRUCTIONS = """
 You are an AI assistant that helps users find and understand information about bipolar disorder 
 from your internal library of bipolar disorder research sources using semantic search.

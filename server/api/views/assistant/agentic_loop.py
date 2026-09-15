@@ -20,16 +20,12 @@ def run_agentic_loop(
     
     while True:
         # TODO: append _turn_usage(response) here — top of the body counts every response once, terminal turn included
-        # user is threaded through so tools that need it get it at dispatch time
 
-        # TODO: Add a schema function to ToolCallExecution
+        # user is threaded through so tools that need it get it at dispatch time
         tool_output_schemas, tool_call_executions = handle_tool_calls(response, tools, user)
 
-        # TODO: Rewrite to .append every iteration's list of tools
-        # TODO: Add a data type to contain each iteration's parameters, response id, 
-        # token usage, and  tool calls  or output text from the client response  and a function 
-        # for the output text and corresponding response id 
     
+        # TODO: Decide whether to add turn: int to ToolCallExecution — without it, the flat tool_calls can't be split back into turns
         # .extend splices every iteration's list of tools into one list
         agentic_loop_tool_call_executions.extend(tool_call_executions)
 
@@ -50,7 +46,8 @@ def run_agentic_loop(
         )
 
 
-# TODO: _turn_usage(response) -> TurnUsage — isinstance(int) guard on every leaf (MagicMock's __radd__ hides bad reads)
+# TODO: _turn_usage(response) -> TurnUsage — isinstance(int) guard on every leaf, 
+# None for a missing or non-int one, never raises (MagicMock's __radd__ hides bad reads)
 def handle_tool_calls(
     response, tools: list, user
 ) -> tuple[list[dict], list[ToolCallExecution]]:

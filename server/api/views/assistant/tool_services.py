@@ -40,6 +40,7 @@ Be specific rather than generic - use terms that would appear in the relevant do
 _MEDICATION_SCHEMA_STRING = "Table: api_medication\nColumns: name, benefits, risks"
 
 
+# TODO: Rewrite the description as a directive like SEARCH_TOOL's — it documents SQL syntax instead
 ASK_DATABASE_TOOL = Tool(
     name="ask_database",
     description="""

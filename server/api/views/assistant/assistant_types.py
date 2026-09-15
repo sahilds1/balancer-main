@@ -55,8 +55,8 @@ class ToolCallExecution:
     # the failure detail when status is not OK    
     error: str | None = None        
 
+# TODO: TurnUsage frozen dataclass — response_id + input/cached_input/output/reasoning_output/total tokens (each int | None) for one responses.create call
 
-# TODO: TurnUsage frozen dataclass — response_id + input/cached_input/output/reasoning_output/total tokens for one responses.create call
 @dataclass(frozen=True)
 class AgentResult:
     """

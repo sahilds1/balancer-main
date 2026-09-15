@@ -39,6 +39,7 @@ def search_documents(query: str, user) -> str:
         return "No relevant documents found for your query. Please try different search terms or upload documents first."
 
     # Format results with clear structure and metadata
+    # TODO: Drop `File: {file_id}` — the model sometimes cites this UUID instead of Name, which makes citations unparseable
     prompt_texts = [
         f"[Document {i + 1} - File: {obj['file_id']}, Name: {obj['name']}, Page: {obj['page_number']}, Chunk: {obj['chunk_number']}, Similarity: {1 - obj['distance']:.3f}]\n{obj['text']}\n[End Document {i + 1}]"
         for i, obj in enumerate(embeddings_results)
