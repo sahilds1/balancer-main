@@ -21,8 +21,9 @@ def run_agentic_loop(
     agentic_loop_turns: list[TurnUsage] = []
 
     while True:
-        # At the top of the body, so the initial response and the terminal turn are
-        # each counted exactly once.
+        # At the top of the body, so the initial response and the terminal turn are each counted exactly once
+
+        # _turn_usage never raises: it runs on the web request path, so an unrecognized usage shape must not fail a user's request.
         agentic_loop_turns.append(_turn_usage(response))
 
         # user is threaded through so tools that need it get it at dispatch time
@@ -75,6 +76,15 @@ def _turn_usage(response) -> TurnUsage:
     __add__/__radd__, so a mocked usage would otherwise accumulate into the CSV as mock
     objects with the suite green.
     """
+
+    #  getattr's default guards the traversal rather than only the leaves,
+    # since usage.output_tokens_details would raise before any leaf check when usage is missing
+
+    # That guard makes silent blanks the hazard, so the field names are pinned by a
+    # test building a real ResponseUsage - the only input in the suite not
+    # constructed from names we chose, and so the only one where a misspelling can
+    # fail rather than quietly blanking a column. Verified against openai 2.29.0.
+    
     usage = getattr(response, "usage", None)
     input_details = getattr(usage, "input_tokens_details", None)
     output_details = getattr(usage, "output_tokens_details", None)
