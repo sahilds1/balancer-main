@@ -11,8 +11,10 @@
 #
 # This is one of two separable citation defects; the other is search_tool.py handing the
 # model a UUID alongside the name (see the TODO there). Neither is cosmetic — citations
-# are unparseable until both land, which blocks citation accuracy, the "cheapest real
-# signal" the scoring TODO in eval_assistant.py is built on.
+# are unparseable until both land, which blocks the eval's scoring layer: citation
+# accuracy is the cheapest real signal available, and a parser written before these two
+# fixes would measure prompt drift rather than accuracy. That layer is not in the tree;
+# it is specified in WORKLOG.md under Blocked.
 #
 # Note both known importers pass this string through verbatim — assistant_services.py
 # hands it to the API as `instructions`, eval_assistant.py imports it for a planned

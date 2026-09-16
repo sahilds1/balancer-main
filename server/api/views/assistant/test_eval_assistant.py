@@ -14,6 +14,7 @@ from api.views.assistant.assistant_types import (
     AgentResult,
     ToolCallExecution,
     ToolCallStatus,
+    TurnUsage,
 )
 from api.views.assistant.eval_assistant import FIELDNAMES, run_one
 
@@ -37,6 +38,27 @@ _SUCCEEDS = {
                 status=ToolCallStatus.FAILED,
                 arguments={"query": "SELECT"},
                 error="bad sql",
+            ),
+        ],
+        # Every field differs between the turns, and no total equals either addend:
+        # 100+250=350, 16+64=80, 10+25=35, 4+9=13. Identical per-turn numbers could not
+        # distinguish "summed the turns" from "read one turn and ignored the rest".
+        # The subset invariants hold too (cached <= input, reasoning <= output), so
+        # these rows are also a shape a real run could produce.
+        turns=[
+            TurnUsage(
+                response_id="resp-0",
+                input_tokens=100,
+                cached_input_tokens=16,
+                output_tokens=10,
+                reasoning_output_tokens=4,
+            ),
+            TurnUsage(
+                response_id="resp-1",
+                input_tokens=250,
+                cached_input_tokens=64,
+                output_tokens=25,
+                reasoning_output_tokens=9,
             ),
         ],
     )
@@ -73,13 +95,26 @@ def test_run_one_captures_error(mock_run_assistant):
     assert row["branch"] == "feature"
     assert row["response_output_text"] is None
     assert "boom" in row["error"]
-    # The error row *defaults* the tool columns rather than omitting them, and still
-    # records time-to-failure. That the columns are present at all is asserted above;
-    # these are their values.
-    assert row["tools_called"] == ""
-    assert row["tool_call_count"] == 0
-    assert row["tool_error_count"] == 0
+    # The error row carries every column rather than omitting them, and still records
+    # time-to-failure. That the columns are present at all is asserted above; these are
+    # their values.
+    #
+    # All None, not "" or 0. run_assistant raised, but tool calls and turns may already
+    # have run and been billed before it did, so these counts are unknown rather than
+    # empty. A 0 would be a fake datum: it reads as a run that called no tools and used
+    # no tokens, and pandas would average it in. None becomes a blank cell, which pandas
+    # treats as missing.
+    assert row["tools_called"] is None
+    assert row["tool_call_count"] is None
+    assert row["tool_error_count"] is None
     assert row["tool_calls_json"] is None
+    assert row["turn_count"] is None
+    assert row["input_tokens"] is None
+    assert row["cached_input_tokens"] is None
+    assert row["output_tokens"] is None
+    assert row["reasoning_output_tokens"] is None
+    assert row["turns_json"] is None
+    # Duration is the exception: it was measured, so it is known.
     assert row["duration_s"] > 0
 
 
@@ -95,3 +130,62 @@ def test_run_one_records_tool_calls(mock_run_assistant):
     # clean at the row level while a retrieval underneath it broke.
     assert row["tool_error_count"] == 1
     assert row["error"] is None
+
+
+@patch("api.views.assistant.eval_assistant.run_assistant", **_SUCCEEDS)
+def test_run_one_totals_the_turns(mock_run_assistant):
+    """The token totals sum every turn, and turn_count counts them.
+
+    Both are derived from result.turns rather than stored, so they cannot disagree
+    with each other the way six independent accumulators could.
+    """
+    row = run_one("query", user=MagicMock(), branch="feature")
+
+    assert row["turn_count"] == 2
+    assert row["input_tokens"] == 350
+    assert row["cached_input_tokens"] == 80
+    assert row["output_tokens"] == 35
+    assert row["reasoning_output_tokens"] == 13
+    # No total_tokens column: it is input + output, derivable by whoever reads the CSV.
+    assert "total_tokens" not in row
+
+
+@patch("api.views.assistant.eval_assistant.run_assistant")
+def test_run_one_totals_are_none_when_any_turn_is_unknown(mock_run_assistant):
+    """One turn with unknown usage makes the whole total unknown, not a partial sum.
+
+    This is the guard on the failure mode the whole design is arranged against: a sum
+    over only the known turns is indistinguishable in the CSV from a complete one, so
+    it would be a real-looking number that isn't real. turn_count stays truthful
+    because it counts turns, not tokens.
+    """
+    mock_run_assistant.return_value = AgentResult(
+        output_text="answer",
+        response_id="resp-1",
+        tool_calls=[],
+        turns=[
+            TurnUsage(
+                response_id="resp-0",
+                input_tokens=100,
+                cached_input_tokens=16,
+                output_tokens=10,
+                reasoning_output_tokens=4,
+            ),
+            # response.usage was missing or an unrecognized shape on this turn.
+            TurnUsage(
+                response_id="resp-1",
+                input_tokens=None,
+                cached_input_tokens=None,
+                output_tokens=None,
+                reasoning_output_tokens=None,
+            ),
+        ],
+    )
+
+    row = run_one("query", user=MagicMock(), branch="feature")
+
+    assert row["turn_count"] == 2
+    assert row["input_tokens"] is None
+    assert row["cached_input_tokens"] is None
+    assert row["output_tokens"] is None
+    assert row["reasoning_output_tokens"] is None

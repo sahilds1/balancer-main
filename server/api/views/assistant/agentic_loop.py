@@ -5,6 +5,7 @@ from api.views.assistant.assistant_types import (
     AgentResult,
     ToolCallExecution,
     ToolCallStatus,
+    TurnUsage,
 )
 
 logger = logging.getLogger(__name__)
@@ -16,15 +17,17 @@ def run_agentic_loop(
 
     # Every tool call the agentic loop made before exiting
     agentic_loop_tool_call_executions= []
-    # TODO: agentic_loop_turns: list[TurnUsage] = [] — the per-iteration token usage accumulator
-    
+    # Token usage for every responses.create call, one entry per iteration
+    agentic_loop_turns: list[TurnUsage] = []
+
     while True:
-        # TODO: append _turn_usage(response) here — top of the body counts every response once, terminal turn included
+        # At the top of the body, so the initial response and the terminal turn are
+        # each counted exactly once.
+        agentic_loop_turns.append(_turn_usage(response))
 
         # user is threaded through so tools that need it get it at dispatch time
         tool_output_schemas, tool_call_executions = handle_tool_calls(response, tools, user)
 
-    
         # TODO: Decide whether to add turn: int to ToolCallExecution — without it, the flat tool_calls can't be split back into turns
         # .extend splices every iteration's list of tools into one list
         agentic_loop_tool_call_executions.extend(tool_call_executions)
@@ -35,7 +38,7 @@ def run_agentic_loop(
                 output_text=response.output_text,
                 response_id=response.id,
                 tool_calls=agentic_loop_tool_call_executions,
-                # TODO: turns=agentic_loop_turns
+                turns=agentic_loop_turns,
             )
 
         #TODO: Add error handling to collect partial AgentResult tool calls
@@ -46,8 +49,45 @@ def run_agentic_loop(
         )
 
 
-# TODO: _turn_usage(response) -> TurnUsage — isinstance(int) guard on every leaf, 
-# None for a missing or non-int one, never raises (MagicMock's __radd__ hides bad reads)
+def _int_or_none(obj, field: str) -> int | None:
+    """Read one integer leaf, or None when it is missing or not an int.
+
+    bool is excluded deliberately: it is an int subclass, so True would otherwise be
+    recorded as a token count of 1.
+    """
+    value = getattr(obj, field, None)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _turn_usage(response) -> TurnUsage:
+    """Token usage for one response, never raising.
+
+    This runs on the web request path as well as in the eval, so an unrecognized usage
+    shape must not fail a user's request.
+
+    getattr's default guards the *traversal*, not only the leaves: when usage is
+    missing, usage.output_tokens_details would raise before any leaf check ran.
+    getattr(None, ...) returns None instead, collapsing the whole chain.
+
+    The isinstance guard is what lets the tests fail. MagicMock implements
+    __add__/__radd__, so a mocked usage would otherwise accumulate into the CSV as mock
+    objects with the suite green.
+    """
+    usage = getattr(response, "usage", None)
+    input_details = getattr(usage, "input_tokens_details", None)
+    output_details = getattr(usage, "output_tokens_details", None)
+
+    return TurnUsage(
+        response_id=response.id,
+        input_tokens=_int_or_none(usage, "input_tokens"),
+        cached_input_tokens=_int_or_none(input_details, "cached_tokens"),
+        output_tokens=_int_or_none(usage, "output_tokens"),
+        reasoning_output_tokens=_int_or_none(output_details, "reasoning_tokens"),
+    )
+
+
 def handle_tool_calls(
     response, tools: list, user
 ) -> tuple[list[dict], list[ToolCallExecution]]:
@@ -55,7 +95,7 @@ def handle_tool_calls(
     # Index the tools by name so a model-supplied call name can be looked up. .get()
     # returns None for an unknown name, handled explicitly below.
     tools_by_name = {tool.name: tool for tool in tools}
-    
+
     tool_output_schemas = []
     tool_call_executions: list[ToolCallExecution] = []
 

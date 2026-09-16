@@ -11,6 +11,10 @@
 #   - run_agentic_loop: the while-loop that keeps calling the model until it stops
 #     emitting tool calls, including loop continuity via previous_response_id and the
 #     function_call_output payload fed back on each continuation.
+#   - _turn_usage: reading token counts off one response, and the guard that turns an
+#     unrecognized usage shape into None rather than into a wrong number. This is the
+#     only part of the suite that builds its input with the SDK's own model instead of
+#     a mock, for the reason given at _make_usage.
 #
 # Two tests were removed as glue. test_ask_database_tool_run_ignores_user asserted a
 # single-argument forward whose wrong version raises TypeError on first call, and
@@ -25,9 +29,15 @@
 # and a body full of conditionals, which costs more clarity than the duplication did.
 
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
 import pytest
+from openai.types.responses import ResponseUsage
+from openai.types.responses.response_usage import (
+    InputTokensDetails,
+    OutputTokensDetails,
+)
 
 # TODO: add coverage for search_documents' formatting of embeddings results — the
 # [Document N - File: ..., Similarity: ...] shape and the multi-result join. No DB
@@ -46,8 +56,10 @@ from api.views.assistant.assistant_types import (
     Tool,
     ToolCallExecution,
     ToolCallStatus,
+    TurnUsage,
 )
 from api.views.assistant.agentic_loop import (
+    _turn_usage,
     handle_tool_calls,
     run_agentic_loop,
 )
@@ -331,6 +343,9 @@ def test_run_agentic_loop_terminates_immediately_when_no_tool_calls():
     assert result.output_text == "Final answer."
     assert result.response_id == "resp-1"
     assert result.tool_calls == []
+    # One turn, not zero: the response passed in is itself a billed responses.create
+    # call, and accumulating at the top of the loop body is what counts it.
+    assert [t.response_id for t in result.turns] == ["resp-1"]
     client.responses.create.assert_not_called()
 
 
@@ -383,6 +398,18 @@ def test_run_agentic_loop_continues_until_the_model_stops_calling_tools(queries)
     # Terminating returns the *last* response's text and id, not the first.
     assert result.output_text == "Final answer."
     assert result.response_id == terminal_id
+    # One TurnUsage per responses.create, the tool-calling turns *and* the terminal one.
+    # Accumulating anywhere but the top of the loop body drops one end or the other.
+    assert [t.response_id for t in result.turns] == [
+        *(turn.id for turn in tool_turns),
+        terminal_id,
+    ]
+    # These responses are MagicMocks, so every usage leaf reads back as a Mock rather
+    # than an int. The isinstance guard must turn that into None: MagicMock implements
+    # __add__/__radd__, so without it the eval would sum mock objects into the CSV with
+    # this suite green.
+    assert all(t.input_tokens is None for t in result.turns)
+    assert all(t.reasoning_output_tokens is None for t in result.turns)
 
 
 def test_run_agentic_loop_feeds_each_turns_tool_output_back_to_the_model():
@@ -433,3 +460,105 @@ def test_run_agentic_loop_feeds_each_turns_tool_output_back_to_the_model():
             }
         ],
     ]
+
+
+# ---------------------------------------------------------------------------
+# _turn_usage tests
+# ---------------------------------------------------------------------------
+
+def _make_usage(input_tokens, cached_tokens, output_tokens, reasoning_tokens):
+    """A real ResponseUsage, built by the SDK rather than by us.
+
+    This is the only input in the suite not constructed from field names we chose, and
+    that is the entire point. Everywhere else the mock is built from the same names the
+    implementation reads, so the two agree no matter what the SDK actually calls them —
+    a misspelling would return None, blank the column, and pass every test, because
+    None is also the legitimate encoding of "usage was missing". Here pydantic rejects
+    a name we invented.
+
+    total_tokens is required by the model so it is supplied, and deliberately asserted
+    nowhere: it is input + output, and TurnUsage does not carry it.
+    """
+    return ResponseUsage(
+        input_tokens=input_tokens,
+        input_tokens_details=InputTokensDetails(cached_tokens=cached_tokens),
+        output_tokens=output_tokens,
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=reasoning_tokens),
+        total_tokens=input_tokens + output_tokens,
+    )
+
+
+def test_turn_usage_reads_every_field_off_a_real_response_usage():
+    """The four SDK field names, and which TurnUsage field each one lands in.
+
+    Every value is distinct, so a transposition — input read into output, cached into
+    reasoning — fails here instead of reaching the CSV as four plausible numbers.
+    Asserting merely that the fields are non-None could not catch that: a wrong mapping
+    is populated too.
+    """
+    response = MagicMock()
+    response.id = "resp-1"
+    response.usage = _make_usage(
+        input_tokens=100, cached_tokens=16, output_tokens=25, reasoning_tokens=9
+    )
+
+    assert _turn_usage(response) == TurnUsage(
+        response_id="resp-1",
+        input_tokens=100,
+        cached_input_tokens=16,
+        output_tokens=25,
+        reasoning_output_tokens=9,
+    )
+
+
+def test_turn_usage_is_all_none_when_the_response_carries_no_usage():
+    """Response.usage is Optional in the SDK, so this is the realistic unknown case.
+
+    Also the traversal guard: usage.input_tokens_details would raise on a missing
+    usage, before any leaf check ran. The turn is still recorded — response_id survives
+    — so turn_count stays truthful even when the counts are unknown.
+    """
+    response = MagicMock()
+    response.id = "resp-1"
+    response.usage = None
+
+    usage = _turn_usage(response)
+
+    assert usage.response_id == "resp-1"
+    assert usage.input_tokens is None
+    assert usage.cached_input_tokens is None
+    assert usage.output_tokens is None
+    assert usage.reasoning_output_tokens is None
+
+
+def test_turn_usage_reads_an_unrecognized_leaf_as_none_rather_than_raising():
+    """A leaf that is present but not an int is unknown, and must not fail the request.
+
+    _turn_usage runs on the web request path, so raising here would let telemetry break
+    a user's answer. That makes silence the real hazard, which is why the isinstance
+    guard exists: without it these values would be carried into the eval and summed,
+    and MagicMock's __radd__ means even the arithmetic would not complain.
+
+    SimpleNamespace rather than ResponseUsage here on purpose — pydantic would reject
+    these values outright, and the shape under test is precisely the one the SDK would
+    never produce.
+    """
+    response = SimpleNamespace(
+        id="resp-1",
+        usage=SimpleNamespace(
+            input_tokens="100",
+            input_tokens_details=SimpleNamespace(cached_tokens=True),
+            output_tokens=None,
+            output_tokens_details=SimpleNamespace(reasoning_tokens=9),
+        ),
+    )
+
+    usage = _turn_usage(response)
+
+    # A string that looks like a number is still not a number.
+    assert usage.input_tokens is None
+    # bool is an int subclass, so True would otherwise record as a count of 1.
+    assert usage.cached_input_tokens is None
+    assert usage.output_tokens is None
+    # The one recognized leaf is still read: a single bad field does not blank the rest.
+    assert usage.reasoning_output_tokens == 9

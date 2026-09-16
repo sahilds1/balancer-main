@@ -55,7 +55,29 @@ class ToolCallExecution:
     # the failure detail when status is not OK    
     error: str | None = None        
 
-# TODO: TurnUsage frozen dataclass — response_id + input/cached_input/output/reasoning_output/total tokens (each int | None) for one responses.create call
+@dataclass(frozen=True)
+class TurnUsage:
+    """
+    Token usage for one responses.create call
+
+    Every count is int | None, where None means *unknown* — response.usage was absent
+    or an unrecognized shape. Not 0, which also means "used no tokens": fake zeros drag
+    down averages and make a run that failed after being billed look free.
+
+    There is no total_tokens field. It is input_tokens + output_tokens, so a stored
+    copy is a sixth number that can disagree with the ones determining it.
+    """
+
+    # Cross-references this turn against OpenAI's logs
+    response_id: str
+    input_tokens: int | None
+    # A subset of input_tokens, not an addend — the prefix stops a later cost
+    # calculation from double-counting. Every turn resends the context via
+    # previous_response_id, which is what makes this the interesting number.
+    cached_input_tokens: int | None
+    output_tokens: int | None
+    # A subset of output_tokens, not an addend
+    reasoning_output_tokens: int | None
 
 @dataclass(frozen=True)
 class AgentResult:
@@ -70,4 +92,7 @@ class AgentResult:
     response_id: str
     # The ordered ToolCallExecution records for every tool invocation across all loop iterations
     tool_calls: list[ToolCallExecution]
-    # TODO: turns: list[TurnUsage] — one per loop iteration; the eval derives turn_count = len() and the token totals = sums
+    # One per loop iteration. Required rather than defaulted: a silent [] would report
+    # turn_count 0 for a run that had turns. The eval derives turn_count = len(turns)
+    # and the token totals = sums over them, so the two cannot drift apart.
+    turns: list[TurnUsage]

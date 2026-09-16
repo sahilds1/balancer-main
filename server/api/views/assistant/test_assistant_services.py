@@ -13,7 +13,7 @@
 # Coverage that leaves open, deliberately noted rather than silently dropped:
 #   - The user -> run_assistant -> loop leg is no longer asserted. It is a bare
 #     positional forward with no decision in it, and the legs on either side are
-#     still covered (test_invoke_calls_tool_and_returns_output asserts the loop
+#     still covered (test_handle_tool_calls_dispatches_tool_and_returns_output asserts the loop
 #     dispatches run(user=user, ...); test_search_tool_run_forwards_query_and_user
 #     asserts the handoff into retrieval).
 #   - Nothing asserts that MODEL_DEFAULTS["tools"] == [tool.schema() for tool in
@@ -43,7 +43,9 @@ def _make_terminal_response(output_text="Final answer.", response_id="resp-1"):
 
 
 def _make_result(output_text="answer", response_id="resp-1"):
-    return AgentResult(output_text=output_text, response_id=response_id, tool_calls=[])
+    return AgentResult(
+        output_text=output_text, response_id=response_id, tool_calls=[], turns=[]
+    )
 
 
 @pytest.mark.parametrize(

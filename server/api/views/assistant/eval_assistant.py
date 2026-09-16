@@ -45,8 +45,15 @@ FIELDNAMES = [
     "tool_call_count",
     "tool_error_count",
     "tool_calls_json",
-    # TODO: add turn_count, the five token columns, and turns_json here and to *both* run_one row literals
-    # Token counts are None (a blank cell) when unknown: response.usage was missing or unrecognized, or the run raised
+    # Token counts are None (a blank cell) when unknown: response.usage was missing or
+    # unrecognized, or the run raised. There is no total_tokens column — it is
+    # input_tokens + output_tokens, derivable wherever these are read.
+    "turn_count",
+    "input_tokens",
+    "cached_input_tokens",
+    "output_tokens",
+    "reasoning_output_tokens",
+    "turns_json",
     "duration_s",
     "error",
 ]
@@ -60,6 +67,22 @@ QUESTIONS = [
     "What is the evidence for quetiapine in bipolar disorder?",
     "How does valproate compare to lithium for mania?",
 ]
+
+
+def _total(turns: list, field: str) -> int | None:
+    """Sum one token field across a run's turns, or None if any turn's count is unknown.
+
+    Summed here rather than accumulated in the loop, so that len(turns) and the totals
+    cannot drift apart — the same reason tool_call_count is derived below rather than
+    stored.
+
+    One unknown turn makes the whole total unknown. A sum over only the known turns
+    would reach the CSV as another real-looking number that isn't real.
+    """
+    values = [getattr(turn, field) for turn in turns]
+    if any(value is None for value in values):
+        return None
+    return sum(values)
 
 
 def run_one(question: str, user, branch: str) -> dict:
@@ -92,7 +115,14 @@ def run_one(question: str, user, branch: str) -> dict:
             # Full per-call detail — status, the model's arguments (query), output/error — 
             # for analysis that the flat columns can't hold.
             "tool_calls_json": json.dumps([asdict(c) for c in result.tool_calls]),
-            # TODO: turn_count = len(result.turns), token totals = sums over result.turns (None if any turn's count is None), turns_json = the asdict list
+            "turn_count": len(result.turns),
+            "input_tokens": _total(result.turns, "input_tokens"),
+            "cached_input_tokens": _total(result.turns, "cached_input_tokens"),
+            "output_tokens": _total(result.turns, "output_tokens"),
+            "reasoning_output_tokens": _total(result.turns, "reasoning_output_tokens"),
+            # Per-turn detail the flat totals can't hold: which turn caching engaged on,
+            # and each turn's response_id for cross-referencing OpenAI's logs.
+            "turns_json": json.dumps([asdict(t) for t in result.turns]),
             "duration_s": duration_s,
             "error": None,
         }
@@ -105,14 +135,20 @@ def run_one(question: str, user, branch: str) -> dict:
             "question": question,
             "response_output_text": None,
             "response_id": None,
-            # TODO: Write None, not "" — tool calls may have run before the raise, so the names are unknown (test_run_one_captures_error asserts "")
-            "tools_called": "",
-            # TODO: Write None, not 0 — tool calls may have run before the raise, so the count is unknown (test_run_one_captures_error asserts 0)
-            "tool_call_count": 0,
-            # TODO: Write None, not 0 — tool calls may have failed before the raise, so the count is unknown (test_run_one_captures_error asserts 0)
-            "tool_error_count": 0,
+            # Every one of these is None rather than "" or 0. Tool calls and turns may
+            # have run before the raise, so their counts are *unknown*, not empty — a 0
+            # would read as a run that made no calls and used no tokens, and would drag
+            # down any average computed over the column.
+            "tools_called": None,
+            "tool_call_count": None,
+            "tool_error_count": None,
             "tool_calls_json": None,
-            # TODO: turn_count, token totals and turns_json all None — unknown, not zero
+            "turn_count": None,
+            "input_tokens": None,
+            "cached_input_tokens": None,
+            "output_tokens": None,
+            "reasoning_output_tokens": None,
+            "turns_json": None,
             "duration_s": duration_s,
             "error": str(e),
         }
